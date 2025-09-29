@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Spy Word Game</title>
+  <style>
+    :root{
+      --bg:#0c1222; --panel:#101a2c; --text:#e6edf3; --muted:#9aa4b2; --accent:#60a5fa; --ok:#22c55e; --warn:#f97316; --danger:#ef4444;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(1200px 800px at 20% -10%, #1f2937 0%, #0c1222 55%), var(--bg);color:var(--text);font:16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif;}
+    .wrap{max-width:920px;margin:48px auto;padding:24px}
+    h1{margin:0 0 16px;font-weight:700;letter-spacing:.3px}
+    .card{background:linear-gradient(180deg, #0f172a 0%, #0b1220 100%);border:1px solid #1f2a44;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.35);padding:20px}
+    label{display:block;margin:10px 0 6px;color:var(--muted)}
+    input[type="number"], input[type="text"]{width:100%;padding:12px 14px;border-radius:12px;border:1px solid #1f2a44;background:#0b1020;color:var(--text)}
+    input[type="number"]:focus, input[type="text"]:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(96,165,250,.25)}
+    .row{display:grid;gap:12px}
+    .row.cols-2{grid-template-columns:1fr 1fr}
+    .btn{display:inline-block;cursor:pointer;border:1px solid transparent;background:var(--accent);color:#0b1020;padding:12px 16px;border-radius:12px;font-weight:700;text-align:center;}
+    .btn.secondary{background:transparent;color:var(--text);border-color:#2a375a}
+    .btn.warn{background:var(--warn);color:#0b1020}
+    .btn:disabled{opacity:.6;cursor:not-allowed}
+    .stack{display:flex;gap:10px;flex-wrap:wrap}
+    .muted{color:var(--muted)}
+    .topbar{position:fixed;left:12px;top:12px;z-index:10}
+    .hidden{display:none}
+    .name-grid{display:grid;grid-template-columns:repeat(auto-fit, minmax(180px,1fr));gap:10px;margin-top:8px}
+    .msg{font-size:22px;margin:8px 0 16px}
+    .role{font-size:28px;font-weight:800;margin:12px 0}
+    .pill{display:inline-flex;align-items:center;gap:8px;background:#0f172a;border:1px solid #1f2a44;border-radius:999px;padding:6px 12px;font-size:14px;color:var(--muted)}
+  </style>
+</head>
+<body>
+  <!-- Top-left Restart -->
+  <div class="topbar">
+    <button id="restartBtn" class="btn secondary" title="Restart the whole game">⟲ Restart</button>
+  </div>
+
+  <div class="wrap">
+    <h1>🕵️ Spy Word Game</h1>
+
+    <!-- Setup Screen -->
+    <section id="setup" class="card">
+      <div class="row cols-2">
+        <div>
+          <label for="numPlayers">Number of players (N)</label>
+          <input id="numPlayers" type="number" min="3" max="18" value="5" />
+        </div>
+        <div>
+          <label for="numSpies">Number of spies (M)</label>
+          <input id="numSpies" type="number" min="1" max="17" value="1" />
+        </div>
+      </div>
+
+      <div style="margin-top:14px">
+        <div class="stack">
+          <button id="makeNamesBtn" class="btn">Set up player names</button>
+          <span class="pill">Tip: M must be &lt; N</span>
+        </div>
+        <div id="namesArea" class="name-grid" style="margin-top:10px"></div>
+      </div>
+
+      <div id="wordArea" class="hidden" style="margin-top:16px">
+        <label for="secretWord">Secret word (chosen by Player 1)</label>
+        <input id="secretWord" type="text" placeholder="e.g., Pizza" />
+      </div>
+
+      <div style="margin-top:18px" class="stack">
+        <button id="startBtn" class="btn" disabled>Start Game</button>
+        <span id="setupHint" class="muted">Add names and a word to enable Start.</span>
+      </div>
+    </section>
+
+    <!-- Game Screen -->
+    <section id="game" class="card hidden">
+      <div class="msg" id="turnMsg">Player X's turn</div>
+      <div id="revealArea">
+        <button id="revealBtn" class="btn">Reveal the role</button>
+      </div>
+      <div id="roleArea" class="hidden">
+        <div class="role" id="roleText"></div>
+        <button id="nextBtn" class="btn warn">Next player →</button>
+      </div>
+      <div style="margin-top:10px" class="muted" id="roundNote"></div>
+    </section>
+  </div>
+
+  <script>
+    (function(){
+      // State
+      let players = []; // [{name, isSpy}]
+      let word = '';
+      let idx = 0;      // current player index
+
+      // Elements
+      const setupEl = document.getElementById('setup');
+      const gameEl = document.getElementById('game');
+      const numPlayersEl = document.getElementById('numPlayers');
+      const numSpiesEl = document.getElementById('numSpies');
+      const makeNamesBtn = document.getElementById('makeNamesBtn');
+      const namesArea = document.getElementById('namesArea');
+      const wordArea = document.getElementById('wordArea');
+      const secretWordEl = document.getElementById('secretWord');
+      const startBtn = document.getElementById('startBtn');
+      const setupHint = document.getElementById('setupHint');
+
+      const turnMsg = document.getElementById('turnMsg');
+      const revealArea = document.getElementById('revealArea');
+      const roleArea = document.getElementById('roleArea');
+      const roleText = document.getElementById('roleText');
+      const revealBtn = document.getElementById('revealBtn');
+      const nextBtn = document.getElementById('nextBtn');
+      const roundNote = document.getElementById('roundNote');
+      const restartBtn = document.getElementById('restartBtn');
+
+      // Helpers
+      function sampleSpyIndices(n, m){
+        // Choose m unique indices from [1..n-1] (exclude 0 so Player 1 can't be a spy)
+        // We do a partial Fisher–Yates shuffle on the subarray starting at index 1.
+        const indices = Array.from({length:n}, (_, i) => i);
+        for(let i = 1; i <= m; i++){
+          const r = i + Math.floor(Math.random() * (n - i)); // r in [i, n-1]
+          [indices[i], indices[r]] = [indices[r], indices[i]];
+        }
+        return new Set(indices.slice(1, m + 1));
+      }
+
+      function validateSetup(){
+        const N = parseInt(numPlayersEl.value,10);
+        const M = parseInt(numSpiesEl.value,10);
+        let ok = Number.isFinite(N) && Number.isFinite(M) && N>=3 && M>=1 && M <= N-1;
+        // all names non-empty
+        const nameInputs = namesArea.querySelectorAll('input[name^="player-"]');
+        if (nameInputs.length !== N) ok = false;
+        for (const inp of nameInputs){ if (!inp.value.trim()) { ok = false; break; } }
+        // word non-empty
+        if (!secretWordEl.value.trim()) ok = false;
+        startBtn.disabled = !ok;
+        setupHint.textContent = ok ? 'Looks good — press Start!' : 'Add valid N/M, fill all names, and enter a word.';
+        return ok;
+      }
+
+      function enterGame(){
+        // Build players list
+        const N = parseInt(numPlayersEl.value,10);
+        const M = parseInt(numSpiesEl.value,10);
+        const spySet = sampleSpyIndices(N, M);
+        players = [];
+        const nameInputs = namesArea.querySelectorAll('input[name^="player-"]');
+        nameInputs.forEach((inp, i)=>{
+          players.push({ name: inp.value.trim(), isSpy: spySet.has(i) });
+        });
+        word = secretWordEl.value.trim();
+        idx = 0;
+        setupEl.classList.add('hidden');
+        gameEl.classList.remove('hidden');
+        roundNote.textContent = '';
+        showTurn();
+      }
+
+      function showTurn(){
+        const p = players[idx];
+        turnMsg.textContent = `It is ${p.name}'s turn. Click to reveal the role.`;
+        revealArea.classList.remove('hidden');
+        roleArea.classList.add('hidden');
+        roleText.textContent = '';
+        revealBtn.focus();
+      }
+
+      function reveal(){
+        const p = players[idx];
+        revealArea.classList.add('hidden');
+        roleArea.classList.remove('hidden');
+        if (p.isSpy){
+          roleText.textContent = '🕵️ You are a SPY';
+        } else {
+          roleText.textContent = `🗝️ Your word: ${word}`;
+        }
+        nextBtn.focus();
+      }
+
+      function nextPlayer(){
+        const prev = idx;
+        idx = (idx + 1) % players.length;
+        if (idx === 0){
+          roundNote.textContent = 'All players have seen their role. You may keep cycling or press Restart to start a new game.';
+        }
+        showTurn();
+      }
+
+      function resetAll(){
+        // Clear UI and state back to setup
+        players = []; word = ''; idx = 0;
+        // regenerate names inputs for current N
+        // namesArea.innerHTML = '';
+        // secretWordEl.value = '';
+        // wordArea.classList.add('hidden');
+        // startBtn.disabled = true;
+        setupHint.textContent = 'Add names and a word to enable Start.';
+        gameEl.classList.add('hidden');
+        setupEl.classList.remove('hidden');
+      }
+
+      // Listeners
+      makeNamesBtn.addEventListener('click', () => {
+        const N = parseInt(numPlayersEl.value,10);
+        const M = parseInt(numSpiesEl.value,10);
+        if (!Number.isFinite(N) || N < 3){ alert('Please choose N ≥ 3.'); return; }
+        if (!Number.isFinite(M) || M < 1){ alert('Please choose M ≥ 1.'); return; }
+        if (M > N-1){ alert('M must be ≤ N-1 when Player 1 can’t be a spy.'); return; }
+        // Build name inputs
+        namesArea.innerHTML = '';
+        for (let i=0;i<N;i++){
+          const inp = document.createElement('input');
+          inp.type = 'text';
+          inp.placeholder = `Player ${i+1} name`;
+          inp.name = `player-${i}`;
+          inp.autocomplete = 'off';
+          namesArea.appendChild(inp);
+        }
+        wordArea.classList.remove('hidden');
+        validateSetup();
+      });
+
+      namesArea.addEventListener('input', validateSetup);
+      secretWordEl.addEventListener('input', validateSetup);
+      numPlayersEl.addEventListener('change', ()=>{ startBtn.disabled = true; wordArea.classList.add('hidden'); namesArea.innerHTML=''; setupHint.textContent='Click "Set up player names" again.'; });
+      numSpiesEl.addEventListener('change', ()=>{ startBtn.disabled = true; setupHint.textContent='Re-validate by setting names/word.'; });
+
+      startBtn.addEventListener('click', () => {
+        if (validateSetup()) enterGame();
+      });
+
+      revealBtn.addEventListener('click', reveal);
+      nextBtn.addEventListener('click', nextPlayer);
+      restartBtn.addEventListener('click', resetAll);
+
+      // Keyboard shortcuts for smooth play on a single device
+      document.addEventListener('keydown', (e)=>{
+        if (gameEl.classList.contains('hidden')) return;
+        if (e.key === 'Enter' || e.key === ' '){
+          e.preventDefault();
+          if (!revealArea.classList.contains('hidden')) reveal();
+          else nextPlayer();
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
